@@ -1,30 +1,25 @@
 %% ===============================
 %  Complex Baseband Modulation Generator
-%  PRODUCTION VERSION (Fixes Accuracy Issues)
-%  Author: Thabiso (Final Upgrade)
+%  V3: HIGH-REALISM UPGRADE
+%  Author: Thabiso (Final Research Grade)
 %% ===============================
 
 clc; clear; close all;
 
 %% Parameters
-fs = 1e6;                 % Increased to 1MHz for realistic bandwidth
-N = 1024;                 % Samples per frame
-numSymbols = 128;         % Increased for better pattern recognition
-sps = 8;                  % Samples per symbol
-numFrames = 1500;         % More data = better generalization
-
-% SNR Floor raised to -10dB. -20dB is pure noise; 
-% we need the model to learn the shape before it learns the noise.
+fs = 1e6;                 
+N = 1024;                 
+numSymbols = 128;         
+sps = 8;                  
+numFrames = 2000;         % INCREASED: More data for higher accuracy
 SNR_range = [-10 30];     
 
-%% Modulation types
 modTypes = {'AM','FM','PM','BPSK','QPSK','BFSK'};
 numMods = length(modTypes);
 
 % --- Pulse Shaper Setup ---
-% This is the "secret sauce" for real-world signal behavior
 rolloff = 0.35; 
-span = 4;
+span = 6; % Increased span for better pulse shape definition
 h_filter = rcosdesign(rolloff, span, sps);
 
 %% Preallocate
@@ -36,61 +31,60 @@ for idxMod = 1:numMods
     for frame = 1:numFrames
 
         SNR_dB = randi(SNR_range);
-        freqOffset = (rand()*0.05 - 0.025); 
-        phaseOffset = (rand()*2*pi - pi);      
-        t = (0:N-1)/fs;
+        
+        % 1. IMPROVED OFFSETS: Randomized per frame
+        freqOffset = (rand()*0.02 - 0.01); % Max 1% freq shift
+        phaseOffset = rand()*2*pi;      
+        
+        % 2. SAMPLING DRIFT: Mimics real hardware clock error
+        clockDrift = 1 + (rand()*0.001 - 0.0005); % ±0.05% drift
+        t = (0:N-1) * clockDrift; 
 
         %% ===============================
-        % SIGNAL GENERATION
+        % SIGNAL GENERATION (CORE)
         %% ===============================
         switch modTypes{idxMod}
-
             case 'AM'
                 msg = resample(randn(1, numSymbols), N, numSymbols);
-                m = 0.5 + 0.5*rand(); 
+                m = 0.5 + 0.3*rand(); 
                 x = (1 + m*msg(1:N));
-
             case 'FM'
                 msg = filter(ones(1,10)/10, 1, randn(1, N));
                 x = exp(1j*2*pi*0.1*cumsum(msg));
-
             case 'PM'
                 msg = resample(randn(1, numSymbols), N, numSymbols);
                 x = exp(1j*pi*msg(1:N));
-
             case 'BPSK'
                 bits = randi([0 1], 1, numSymbols);
                 syms = 2*bits - 1;
-                % Apply Pulse Shaping
                 x_pulse = upfirdn(syms, h_filter, sps);
                 x = x_pulse(1:N);
-
             case 'QPSK'
                 bits = randi([0 1], 1, 2*numSymbols);
                 syms = pskmod(bits.', 4, pi/4, 'InputType', 'bit').';
-                % Apply Pulse Shaping
                 x_pulse = upfirdn(syms, h_filter, sps);
                 x = x_pulse(1:N);
-
             case 'BFSK'
                 bits = randi([0 1], 1, numSymbols);
-                % FSK modulation with realistic frequency separation
                 x = fskmod(bits, 2, 0.1*fs, sps, fs);
                 x = x(1:N);
         end
 
         %% ===============================
-        % REAL-WORLD CHANNEL EFFECTS
+        % UPGRADED CHANNEL EFFECTS
         %% ===============================
-        % 1. Rayleigh Fading (Multipath)
-        h = (randn(1,N) + 1j*randn(1,N))/sqrt(2);
-        h = filter(ones(1,5)/5, 1, h); 
+        % 1. RICIAN FADING (More realistic than just Rayleigh)
+        % This adds a direct Line-of-Sight component + scattered multipath
+        K = 4; % Rician K-factor
+        los = sqrt(K/(K+1)); 
+        scatter = sqrt(1/(K+1)) * (randn(1,N) + 1j*randn(1,N))/sqrt(2);
+        h = filter(ones(1,5)/5, 1, los + scatter); 
         x = x .* h;
 
-        % 2. Frequency & Phase Offsets
-        x = x .* exp(1j*(2*pi*freqOffset*(1:N) + phaseOffset));
+        % 2. Apply Freq/Phase/Timing offsets
+        x = x .* exp(1j*(2*pi*freqOffset*t + phaseOffset));
 
-        % 3. Power Normalization (Critical for CNN)
+        % 3. Power Normalization
         x = x / sqrt(mean(abs(x).^2));
 
         % 4. Add AWGN
@@ -101,14 +95,4 @@ for idxMod = 1:numMods
 end
 
 save('mod_data.mat', 'allSignals', 'modTypes', 'fs');
-fprintf('Success! Dataset generated.\n');
-
-%% VISUALIZATION
-figure;
-for idxMod = 1:numMods
-    subplot(3,2,idxMod);
-    plot(real(allSignals(1,1:200,idxMod))); hold on;
-    plot(imag(allSignals(1,1:200,idxMod)));
-    title(modTypes{idxMod});
-    legend('I','Q');
-end
+fprintf('Success! V3 Dataset generated.\n');
